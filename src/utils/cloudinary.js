@@ -13,8 +13,8 @@ const uploadOnCloudinary = async (localFilePath) => {
 
         //upload the file on cloudinary
         const response = await cloudinary.uploader.upload(localFilePath, {
-            // resource_type: "auto",
-            resource_type: "image",
+            resource_type: "auto",
+            // resource_type: "image",
         });
 
         // console.log("file is uploaded on cloudinary ", response.url);
@@ -29,12 +29,18 @@ const uploadOnCloudinary = async (localFilePath) => {
     }
 };
 
-const deleteFromCloudinary = async (publicId) => {
+/**
+ * Deletes a file from Cloudinary
+ * @param {string} publicId - The public ID of the file to delete
+ * @param {"image" | "video" | "raw"} resourceType - The type of file (image" or "video", "raw( pdf, zips )")
+ */
+
+const deleteFromCloudinary = async (publicId, resourceType) => {
     try {
         if (!publicId) return null;
 
         const response = await cloudinary.uploader.destroy(publicId, {
-            resource_type: "image",
+            resource_type: resourceType,
         });
 
         return response;
