@@ -169,21 +169,311 @@ const publishAVideo = asyncHandler(async (req, res) => {
 
 const getVideoById = asyncHandler(async (req, res) => {
     const { videoId } = req.params;
-    //TODO: get video by id
+
+    if (!mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid video Id");
+    }
+
+    if (req.user?._id) {
+        await Video.findByIdAndUpdate(videoId, {
+            $inc: {
+                views: 1,
+            },
+        });
+    }
+
+    const video = await Video.aggregate([
+        {
+            $match: {
+                _id: new mongoose.Types.ObjectId(videoId),
+            },
+        },
+        {
+            $lookup: {
+                from: "comments",
+                localField: "_id",
+                foreignField: "video",
+                as: "comments",
+                pipeline: [
+                    {
+                        $sort: {
+                            createdAt: -1,
+                        },
+                    },
+                    {
+                        $limit: 10,
+                    },
+                    {
+                        $lookup: {
+                            from: "users",
+                            localField: "owner",
+                            foreignField: "_id",
+                            as: "commentedByUser",
+                            pipeline: [
+                                {
+                                    $project: {
+                                        avatar: 1,
+                                        username: 1,
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                    {
+                        $addFields: {
+                            commentedByUser: {
+                                $first: "$commentedByUser",
+                            },
+                        },
+                    },
+                ],
+            },
+        },
+        {
+            $lookup: {
+                from: "likes",
+                localField: "_id",
+                foreignField: "video",
+                as: "likes",
+            },
+        },
+        {
+            $lookup: {
+                from: "users",
+                localField: "owner",
+                foreignField: "_id",
+                as: "owner",
+                pipeline: [
+                    {
+                        $project: {
+                            avatar: 1,
+                            username: 1,
+                        },
+                    },
+                    {
+                        $lookup: {
+                            from: "subscriptions",
+                            localField: "_id",
+                            foreignField: "channel",
+                            as: "subscribers", // will be added as array of objects
+                        },
+                    },
+                    {
+                        $addFields: {
+                            subscriberCount: {
+                                $size: "$subscribers",
+                            },
+                            isSubscribed: {
+                                $cond: {
+                                    if: {
+                                        $in: [
+                                            req.user?._id,
+                                            "$subscribers.subscriber",
+                                        ],
+                                    },
+                                    then: true,
+                                    else: false,
+                                },
+                            },
+                        },
+                    },
+                    {
+                        $project: {
+                            username: 1,
+                            avatar: 1,
+                            subscriberCount: 1,
+                            isSubscribed: 1,
+                        },
+                    },
+                ],
+            },
+        },
+        {
+            $addFields: {
+                totalLikes: {
+                    $size: "$likes",
+                },
+                isLiked: {
+                    $cond: {
+                        if: { $in: [req.user?._id, "$likes.likedBy"] },
+                        then: true,
+                        else: false,
+                    },
+                },
+                owner: {
+                    $first: "$owner",
+                },
+            },
+        },
+    ]);
+
+    if (!video.length) {
+        throw new ApiError(404, "Video does not exist");
+    }
+
+    return res
+        .status(200)
+        .json(new ApiResponse(200, video[0], "video fetched successfully"));
 });
 
 const updateVideo = asyncHandler(async (req, res) => {
     const { videoId } = req.params;
-    //TODO: update video details like title, description, thumbnail
+    const { title, description } = req.body;
+    const userId = req.user?._id;
+
+    if (!mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid video Id");
+    }
+
+    if (
+        !title?.trim() &&
+        !description?.trim() &&
+        !(
+            req.files &&
+            Array.isArray(req.files.thumbnail) &&
+            req.files.thumbnail.length > 0
+        )
+    ) {
+        throw new ApiError(400, "Required atleast one field to update");
+    }
+
+    const updateData = {};
+
+    if (title?.trim()) {
+        updateData["title"] = title.trim();
+    }
+
+    if (description?.trim()) {
+        updateData["description"] = description.trim();
+    }
+
+    let thumbnailLocalPath;
+    if (
+        req.files &&
+        Array.isArray(req.files.thumbnail) &&
+        req.files.thumbnail.length > 0
+    ) {
+        thumbnailLocalPath = req.files.thumbnail[0].path;
+    }
+
+    let thumbnailPath;
+    if (thumbnailLocalPath) {
+        thumbnailPath = await uploadOnCloudinary(thumbnailLocalPath);
+    }
+
+    if (thumbnailPath) {
+        updateData["thumbnail"] = {
+            url: thumbnailPath.url,
+            public_id: thumbnailPath.public_id,
+        };
+    }
+
+    try {
+        const updatedVideo = await Video.findOneAndUpdate(
+            {
+                _id: videoId,
+                owner: userId,
+            },
+
+            {
+                $set: updateData,
+            },
+            { returnDocument: "after" }
+        );
+
+        if (!updatedVideo) {
+            throw new ApiError(
+                404,
+                "Video not found or you are not authorized to update this video"
+            );
+        }
+        return res
+            .status(200)
+            .json(
+                new ApiResponse(
+                    200,
+                    updatedVideo,
+                    "Successfully updated video details"
+                )
+            );
+    } catch (error) {
+        if (thumbnailPath?.public_id) {
+            await deleteFromCloudinary(thumbnailPath.public_id, "image");
+        }
+        throw error;
+    }
 });
 
 const deleteVideo = asyncHandler(async (req, res) => {
     const { videoId } = req.params;
-    //TODO: delete video
+    const userId = req.user?._id;
+
+    if (!mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid video Id");
+    }
+
+    const deletedVideo = await Video.findOneAndDelete({
+        _id: videoId,
+        owner: userId,
+    });
+
+    if (!deletedVideo) {
+        throw new ApiError(
+            404,
+            "Video not found or you are not authorized to delete this video"
+        );
+    }
+
+    if (deletedVideo.videoFile?.public_id) {
+        await deleteFromCloudinary(deletedVideo.videoFile.public_id, "video");
+    }
+
+    if (deletedVideo.thumbnail?.public_id) {
+        await deleteFromCloudinary(deletedVideo.thumbnail.public_id, "image");
+    }
+
+    return res
+        .status(200)
+        .json(new ApiResponse(200, {}, "video deleted successfully"));
 });
 
 const togglePublishStatus = asyncHandler(async (req, res) => {
     const { videoId } = req.params;
+    const userId = req.user?._id;
+
+    if (!mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid video Id");
+    }
+
+    const video = await Video.findOneAndUpdate(
+        {
+            _id: videoId,
+            owner: userId,
+        },
+        [
+            {
+                $set: {
+                    isPublished: { $not: "$isPublished" },
+                },
+            },
+        ],
+        {
+            returnDocument: "after",
+        }
+    );
+
+    if (!video) {
+        throw new ApiError(
+            404,
+            "Video not found or you are not authorized to update this video"
+        );
+    }
+
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(200, video, "Successfully toggled publish status")
+        );
 });
 
 export {

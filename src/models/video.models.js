@@ -4,24 +4,30 @@ import mongooseAggregatePaginate from "mongoose-aggregate-paginate-v2";
 const videoSchema = new Schema(
     {
         videoFile: {
-            url: {
-                type: String,
-                required: true,
+            type: {
+                url: {
+                    type: String,
+                    required: true,
+                },
+                public_id: {
+                    type: String,
+                    required: true,
+                },
             },
-            public_id: {
-                type: String,
-                required: true,
-            },
+            required: true,
         },
         thumbnail: {
-            url: {
-                type: String,
-                required: true,
+            type: {
+                url: {
+                    type: String,
+                    required: true,
+                },
+                public_id: {
+                    type: String,
+                    required: true,
+                },
             },
-            public_id: {
-                type: String,
-                required: true,
-            },
+            required: true,
         },
         title: {
             type: String,
