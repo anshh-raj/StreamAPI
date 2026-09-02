@@ -9,7 +9,7 @@ const getVideoComments = asyncHandler(async (req, res) => {
     const { videoId } = req.params;
     const { page = 1, limit = 10 } = req.query;
 
-    if (!mongoose.isValidObjectId(videoId) || !videoId) {
+    if (!mongoose.isValidObjectId(videoId)) {
         throw new ApiError(400, "Invalid video id");
     }
 
@@ -75,21 +75,105 @@ const getVideoComments = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Error while searching comments");
     }
 
-    res.status(200).json(
-        new ApiResponse(200, paginateComments, "successfully fetched comments")
-    );
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(
+                200,
+                paginateComments,
+                "successfully fetched comments"
+            )
+        );
 });
 
 const addComment = asyncHandler(async (req, res) => {
-    // TODO: add a comment to a video
+    const { videoId } = req.params;
+    const { content } = req.body;
+
+    if (!mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid video id");
+    }
+
+    if (!content?.trim()) {
+        throw new ApiError(400, "Comment cannot be empty");
+    }
+
+    const video = await Video.findById(videoId);
+    if (!video) {
+        throw new ApiError(404, "Video not found");
+    }
+
+    const comment = await Comment.create({
+        content: content.trim(),
+        video: videoId,
+        owner: req.user?._id,
+    });
+
+    if (!comment) {
+        throw new ApiError(
+            500,
+            "something went wrong while adding the comment"
+        );
+    }
+
+    return res
+        .status(201)
+        .json(new ApiResponse(201, comment, "Comment added successfully"));
 });
 
 const updateComment = asyncHandler(async (req, res) => {
-    // TODO: update a comment
+    const { commentId } = req.params;
+    const { content } = req.body;
+
+    if (!mongoose.isValidObjectId(commentId)) {
+        throw new ApiError(400, "Invalid comment id");
+    }
+
+    if (!content?.trim()) {
+        throw new ApiError(400, "Comment cannot be empty");
+    }
+
+    const updatedComment = await Comment.findOneAndUpdate(
+        {
+            _id: commentId,
+            owner: req.user?._id,
+        },
+        {
+            content: content.trim(),
+        },
+        { returnDocument: "after" }
+    );
+
+    if (!updatedComment) {
+        throw new ApiError(404, "Comment does not exist");
+    }
+
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(200, updatedComment, "Comment updated successfully")
+        );
 });
 
 const deleteComment = asyncHandler(async (req, res) => {
-    // TODO: delete a comment
+    const { commentId } = req.params;
+
+    if (!mongoose.isValidObjectId(commentId)) {
+        throw new ApiError(400, "Invalid comment id");
+    }
+
+    const deletedComment = await Comment.findOneAndDelete({
+        _id: commentId,
+        owner: req.user?._id,
+    });
+
+    if (!deletedComment) {
+        throw new ApiError(404, "Comment does not exist");
+    }
+
+    return res
+        .status(200)
+        .json(new ApiResponse(200, "Comment deleted successfully"));
 });
 
 export { getVideoComments, addComment, updateComment, deleteComment };
